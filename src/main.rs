@@ -6,6 +6,23 @@ use clap::Parser;
 use std::path::PathBuf;
 use crate::crawler::{Crawler, CrawlerConfig};
 use crate::output::{save_results, print_results, OutputFormat};
+use tracing::{info, warn, error};
+
+fn setup_logging(level: &str) {
+    use tracing_subscriber::{fmt, EnvFilter};
+    use time::macros::format_description;
+
+    let timer_format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    
+    fmt()
+        .with_env_filter(EnvFilter::new(level))
+        .with_timer(fmt::time::TimeFormatter::new(timer_format))
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_line_number(true)
+        .with_file(true)
+        .init();
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -53,11 +70,20 @@ struct Args {
     /// 请求超时时间（秒）
     #[arg(short = 't', long, default_value = "30", help_heading = "网络选项")]
     timeout: u64,
+
+    /// 日志级别
+    /// 可选: error, warn, info, debug, trace
+    #[arg(short = 'l', long, default_value = "info", help_heading = "日志选项")]
+    log_level: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    
+    // 设置日志
+    setup_logging(&args.log_level);
+    info!("启动 adoc 爬虫工具...");
     
     let config = CrawlerConfig {
         max_retries: args.max_retries,
@@ -65,19 +91,32 @@ async fn main() -> Result<()> {
         timeout: std::time::Duration::from_secs(args.timeout),
     };
     
+    info!(
+        "配置信息: 并发数={}, 超时={}s, 重试次数={}", 
+        config.concurrency, 
+        config.timeout.as_secs(), 
+        config.max_retries
+    );
+    
     let mut crawler = Crawler::new(config);
     
+    info!("开始爬取: {}", args.input);
     let results = if args.input.starts_with("http") {
         crawler.crawl_url(&args.input, args.recursive).await?
     } else {
         crawler.search_and_crawl(&args.input, args.recursive).await?
     };
+    info!("爬取完成，共获取 {} 个页面", results.len());
 
     if let Some(output_path) = args.output {
+        info!("保存结果到文件: {}", output_path.display());
         save_results(&results, &output_path, args.format)?;
+        info!("文件保存成功");
     } else {
+        info!("打印结果到控制台");
         print_results(&results, args.format);
     }
 
+    info!("任务完成");
     Ok(())
 }
