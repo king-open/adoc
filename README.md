@@ -22,7 +22,7 @@
 ## 🚀 安装 
 
 ```bash
-git clone https://github.com/yourusername/adoc.git
+gcl git@github.com:king-open/adoc.git 
 
 cd adoc
 ```
