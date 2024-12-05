@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use url::Url;
 use tracing::{info, warn, debug, error, instrument};
+use indicatif::{ProgressBar, ProgressStyle};
 
 #[derive(Debug, Serialize)]
 pub struct DocPage {
@@ -58,6 +59,15 @@ impl Crawler {
     pub async fn crawl_url(&mut self, url: &str, recursive: bool) -> Result<Vec<DocPage>> {
         let mut pages = Vec::new();
         
+        // 创建主进度条
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.green} [{elapsed_precise}] {msg}")
+                .unwrap()
+        );
+        spinner.set_message(format!("爬取页面: {}", url));
+        
         {
             let mut visited = self.visited_urls.lock().await;
             if visited.contains(url) {
@@ -91,6 +101,15 @@ impl Crawler {
             let links: Vec<String> = pages[0].related_links.clone();
             info!("发现 {} 个相关链接，开始并发爬取", links.len());
             
+            // 创建多进度条
+            let progress = ProgressBar::new(links.len() as u64);
+            progress.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+                    .unwrap()
+                    .progress_chars("#>-")
+            );
+            
             let client = self.client.clone();
             let visited_urls = self.visited_urls.clone();
             let config = &self.config;
@@ -99,89 +118,27 @@ impl Crawler {
                 .map(|link| {
                     let client = client.clone();
                     let visited_urls = visited_urls.clone();
+                    let progress = progress.clone();
                     async move {
                         let mut visited = visited_urls.lock().await;
                         if visited.contains(&link) {
-                            debug!("跳过已访问的链接: {}", link);
+                            progress.inc(1);
+                            progress.set_message(format!("跳过: {}", link));
                             return Ok::<Vec<DocPage>, anyhow::Error>(vec![]);
                         }
                         visited.insert(link.clone());
-                        debug!("开始爬取相关链接: {}", link);
+                        progress.set_message(format!("爬取: {}", link));
                         drop(visited);
 
-                        let mut backoff = ExponentialBackoff::default();
-                        backoff.max_elapsed_time = Some(config.timeout);
-                        
-                        let start = std::time::Instant::now();
-                        debug!("开始请求页面: {}", link);
-                        
-                        let response = backoff::future::retry(backoff, || async {
-                            let request_start = std::time::Instant::now();
-                            match client.get(&link).send().await {
-                                Ok(resp) => {
-                                    let elapsed = request_start.elapsed();
-                                    debug!(
-                                        "请求成功: {}, 状态码: {}, 耗时: {:.2}s",
-                                        link,
-                                        resp.status(),
-                                        elapsed.as_secs_f64()
-                                    );
-                                    Ok(resp)
-                                }
-                                Err(e) => {
-                                    warn!("请求失败，准备重试: {}, 错误: {}", link, e);
-                                    Err(e.into())
-                                }
-                            }
-                        }).await;
-
-                        match response {
-                            Ok(response) => {
-                                let html = response.text().await?;
-                                let document = Html::parse_document(&html);
-                                
-                                let title_selector = Selector::parse("h1").unwrap();
-                                let content_selector = Selector::parse("article").unwrap();
-                                let links_selector = Selector::parse("a[href]").unwrap();
-
-                                let title = document
-                                    .select(&title_selector)
-                                    .next()
-                                    .map(|el| Self::clean_text(&el.text().collect::<String>()))
-                                    .unwrap_or_default();
-
-                                let content = document
-                                    .select(&content_selector)
-                                    .next()
-                                    .map(|el| Self::clean_text(&el.text().collect::<String>()))
-                                    .unwrap_or_default();
-
-                                let base_url = Url::parse(&link)?;
-                                let related_links: Vec<String> = document
-                                    .select(&links_selector)
-                                    .filter_map(|el| {
-                                        el.value().attr("href").and_then(|href| {
-                                            base_url.join(href).ok().map(|url| url.to_string())
-                                        })
-                                    })
-                                    .filter(|url| url.contains("developer.apple.com"))
-                                    .collect();
-
-                                let elapsed = start.elapsed();
-                                info!(
-                                    "页面处理完成: {}, 总耗时: {:.2}s",
-                                    link,
-                                    elapsed.as_secs_f64()
-                                );
-
-                                Ok(vec![DocPage {
-                                    title,
-                                    content,
-                                    url: link.clone(),
-                                    related_links,
-                                }])
+                        match self.fetch_page_with_client(&link, &client).await {
+                            Ok(page) => {
+                                progress.inc(1);
+                                progress.set_message(format!("成功: {}", link));
+                                Ok(vec![page])
                             }
                             Err(e) => {
+                                progress.inc(1);
+                                progress.set_message(format!("失败: {}", link));
                                 warn!("爬取相关页面失败: {}, 错误: {}", link, e);
                                 Ok(vec![])
                             }
@@ -199,9 +156,11 @@ impl Crawler {
                     pages.append(&mut sub_pages);
                 }
             }
-            info!("并发爬取完成，成功获取 {} 个相关页面", success_count);
+            
+            progress.finish_with_message(format!("完成！成功爬取 {} 个页面", success_count));
         }
 
+        spinner.finish_with_message(format!("完成！共获取 {} 个页面", pages.len()));
         Ok(pages)
     }
 

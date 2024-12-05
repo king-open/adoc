@@ -18,3 +18,4 @@ urlencoding = "2.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 time = { version = "0.3", features = ["formatting", "macros"] }
+indicatif = "0.17"

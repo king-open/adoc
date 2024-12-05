@@ -65,11 +65,13 @@ adoc -i https://developer.apple.com/documentation/swift -c 10
 
 ## 📝 TODO
 
-- [ ] 添加进度条显示
-- [ ] 支持导出为 Markdown 格式
+- [x] 添加进度条显示
+- [x] 支持导出为 Markdown 格式
 - [ ] 添加代理支持
 - [ ] 实现断点续传
-- [ ] 添加测试用例
+- [x] 添加测试用例
+
+
 
 ## 📄 许可证
 
