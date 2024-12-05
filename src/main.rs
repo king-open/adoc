@@ -6,7 +6,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use crate::crawler::{Crawler, CrawlerConfig};
 use crate::output::{save_results, print_results, OutputFormat};
-use tracing::{info, warn, error};
+use tracing::{info};
 
 fn setup_logging(level: &str) {
     use tracing_subscriber::{fmt, EnvFilter};
@@ -16,7 +16,7 @@ fn setup_logging(level: &str) {
     
     fmt()
         .with_env_filter(EnvFilter::new(level))
-        .with_timer(fmt::time::TimeFormatter::new(timer_format))
+        .with_timer(fmt::time::UtcTime::new(timer_format))
         .with_target(false)
         .with_thread_ids(true)
         .with_line_number(true)

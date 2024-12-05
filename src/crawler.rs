@@ -83,6 +83,7 @@ impl Crawler {
             
             let client = self.client.clone();
             let visited_urls = self.visited_urls.clone();
+            let config = &self.config;
             
             let results: Vec<_> = stream::iter(links)
                 .map(|link| {
@@ -92,16 +93,83 @@ impl Crawler {
                         let mut visited = visited_urls.lock().await;
                         if visited.contains(&link) {
                             debug!("跳过已访问的链接: {}", link);
-                            return Ok(vec![]);
+                            return Ok::<Vec<DocPage>, anyhow::Error>(vec![]);
                         }
                         visited.insert(link.clone());
                         debug!("开始爬取相关链接: {}", link);
                         drop(visited);
 
-                        match self.fetch_page_with_client(&link, &client).await {
-                            Ok(page) => {
-                                info!("成功爬取相关页面: {}", link);
-                                Ok(vec![page])
+                        let mut backoff = ExponentialBackoff::default();
+                        backoff.max_elapsed_time = Some(config.timeout);
+                        
+                        let start = std::time::Instant::now();
+                        debug!("开始请求页面: {}", link);
+                        
+                        let response = backoff::future::retry(backoff, || async {
+                            let request_start = std::time::Instant::now();
+                            match client.get(&link).send().await {
+                                Ok(resp) => {
+                                    let elapsed = request_start.elapsed();
+                                    debug!(
+                                        "请求成功: {}, 状态码: {}, 耗时: {:.2}s",
+                                        link,
+                                        resp.status(),
+                                        elapsed.as_secs_f64()
+                                    );
+                                    Ok(resp)
+                                }
+                                Err(e) => {
+                                    warn!("请求失败，准备重试: {}, 错误: {}", link, e);
+                                    Err(e.into())
+                                }
+                            }
+                        }).await;
+
+                        match response {
+                            Ok(response) => {
+                                let html = response.text().await?;
+                                let document = Html::parse_document(&html);
+                                
+                                let title_selector = Selector::parse("h1").unwrap();
+                                let content_selector = Selector::parse("article").unwrap();
+                                let links_selector = Selector::parse("a[href]").unwrap();
+
+                                let title = document
+                                    .select(&title_selector)
+                                    .next()
+                                    .map(|el| el.text().collect::<String>())
+                                    .unwrap_or_default();
+
+                                let content = document
+                                    .select(&content_selector)
+                                    .next()
+                                    .map(|el| el.text().collect::<String>())
+                                    .unwrap_or_default();
+
+                                let base_url = Url::parse(&link)?;
+                                let related_links: Vec<String> = document
+                                    .select(&links_selector)
+                                    .filter_map(|el| {
+                                        el.value().attr("href").and_then(|href| {
+                                            base_url.join(href).ok().map(|url| url.to_string())
+                                        })
+                                    })
+                                    .filter(|url| url.contains("developer.apple.com"))
+                                    .collect();
+
+                                let elapsed = start.elapsed();
+                                info!(
+                                    "页面处理完成: {}, 总耗时: {:.2}s",
+                                    link,
+                                    elapsed.as_secs_f64()
+                                );
+
+                                Ok(vec![DocPage {
+                                    title,
+                                    content,
+                                    url: link.clone(),
+                                    related_links,
+                                }])
                             }
                             Err(e) => {
                                 warn!("爬取相关页面失败: {}, 错误: {}", link, e);
@@ -110,7 +178,7 @@ impl Crawler {
                         }
                     }
                 })
-                .buffer_unordered(self.config.concurrency)
+                .buffer_unordered(config.concurrency)
                 .collect()
                 .await;
 
@@ -127,12 +195,15 @@ impl Crawler {
         Ok(pages)
     }
 
-    async fn fetch_page(&self, url: &str) -> Result<DocPage> {
-        self.fetch_page_with_client(url, &self.client).await
+    pub async fn search_and_crawl(&mut self, keyword: &str, recursive: bool) -> Result<Vec<DocPage>> {
+        let search_url = format!(
+            "https://developer.apple.com/search/index.php?q={}",
+            urlencoding::encode(keyword)
+        );
+        self.crawl_url(&search_url, recursive).await
     }
 
-    #[instrument(skip(self, client))]
-    async fn fetch_page_with_client(&self, url: &str, client: &Client) -> Result<DocPage> {
+    async fn fetch_page(&mut self, url: &str) -> Result<DocPage> {
         let mut backoff = ExponentialBackoff::default();
         backoff.max_elapsed_time = Some(self.config.timeout);
         
@@ -141,7 +212,7 @@ impl Crawler {
         
         let response = backoff::future::retry(backoff, || async {
             let request_start = std::time::Instant::now();
-            match client.get(url).send().await {
+            match self.client.get(url).send().await {
                 Ok(resp) => {
                     let elapsed = request_start.elapsed();
                     debug!(
@@ -162,7 +233,6 @@ impl Crawler {
         let html = response.text().await?;
         let document = Html::parse_document(&html);
         
-        // 解析页面内容
         let title_selector = Selector::parse("h1").unwrap();
         let content_selector = Selector::parse("article").unwrap();
         let links_selector = Selector::parse("a[href]").unwrap();
@@ -203,13 +273,5 @@ impl Crawler {
             url: url.to_string(),
             related_links,
         })
-    }
-
-    pub async fn search_and_crawl(&mut self, keyword: &str, recursive: bool) -> Result<Vec<DocPage>> {
-        let search_url = format!(
-            "https://developer.apple.com/search/index.php?q={}",
-            urlencoding::encode(keyword)
-        );
-        self.crawl_url(&search_url, recursive).await
     }
 } 
