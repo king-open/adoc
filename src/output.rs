@@ -1,14 +1,27 @@
 use anyhow::Result;
-use clap::ValueEnum;
+use clap::{ValueEnum, Parser};
 use std::path::Path;
 use crate::crawler::DocPage;
 
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "lowercase")]
 pub enum OutputFormat {
     Json,
+    #[value(name = "pretty")]
     PrettyJson,
     Txt,
     Markdown,
+}
+
+impl std::fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputFormat::Json => write!(f, "json"),
+            OutputFormat::PrettyJson => write!(f, "pretty"),
+            OutputFormat::Txt => write!(f, "txt"),
+            OutputFormat::Markdown => write!(f, "markdown"),
+        }
+    }
 }
 
 pub fn save_results(results: &[DocPage], output_path: &Path, format: OutputFormat) -> Result<()> {

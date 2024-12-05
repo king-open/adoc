@@ -33,9 +33,10 @@ fn setup_logging(level: &str) {
     long_about = "一个快速、高效的 Apple 开发者文档爬虫工具。
 
 示例:
-    adoc -i \"SwiftUI\" -o swiftui.json       # 搜索 SwiftUI 文档并保存为 JSON
-    adoc -i \"UIKit\" -r -o uikit.txt         # 递归爬取 UIKit 相关文档
-    adoc -i https://developer.apple.com/documentation/swift -c 10  # 使用10个并发任务爬取"
+    adoc -i \"SwiftUI\" -o swiftui.json            # 搜索 SwiftUI 文档并保存为 JSON
+    adoc -i \"UIKit\" -r -o uikit.txt              # 递归爬取 UIKit 相关文档
+    adoc -i \"SwiftUI\" --format markdown -o doc.md # 导出为 Markdown 格式
+    adoc -i \"SwiftUI\" -f pretty -o doc.json      # 导出为美化的 JSON"
 )]
 struct Args {
     /// Apple 开发者文档 URL 或关键字
@@ -59,8 +60,14 @@ struct Args {
     output: Option<PathBuf>,
 
     /// 输出格式
-    /// 可选: json, txt, pretty_json
-    #[arg(short = 'f', long, default_value = "json", help_heading = "输出选项")]
+    /// 可选值: json, pretty, txt, markdown
+    #[arg(
+        short = 'f',
+        long = "format",
+        value_enum,
+        default_value_t = OutputFormat::Json,
+        help_heading = "输出选项"
+    )]
     format: OutputFormat,
 
     /// 网络请求最大重试次数

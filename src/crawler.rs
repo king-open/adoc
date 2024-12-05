@@ -31,6 +31,16 @@ pub struct Crawler {
 }
 
 impl Crawler {
+    fn clean_text(text: &str) -> String {
+        text.lines()  // 按行分割
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))  // 清理每行的空白
+            .filter(|line| !line.is_empty())  // 移除空行
+            .collect::<Vec<_>>()  // 收集到 Vec
+            .join("\n")  // 用换行符重新连接
+            .trim()  // 去除首尾空白
+            .to_string()
+    }
+
     pub fn new(config: CrawlerConfig) -> Self {
         let client = Client::builder()
             .timeout(config.timeout)
@@ -137,13 +147,13 @@ impl Crawler {
                                 let title = document
                                     .select(&title_selector)
                                     .next()
-                                    .map(|el| el.text().collect::<String>())
+                                    .map(|el| Self::clean_text(&el.text().collect::<String>()))
                                     .unwrap_or_default();
 
                                 let content = document
                                     .select(&content_selector)
                                     .next()
-                                    .map(|el| el.text().collect::<String>())
+                                    .map(|el| Self::clean_text(&el.text().collect::<String>()))
                                     .unwrap_or_default();
 
                                 let base_url = Url::parse(&link)?;
@@ -240,13 +250,13 @@ impl Crawler {
         let title = document
             .select(&title_selector)
             .next()
-            .map(|el| el.text().collect::<String>())
+            .map(|el| Self::clean_text(&el.text().collect::<String>()))
             .unwrap_or_default();
 
         let content = document
             .select(&content_selector)
             .next()
-            .map(|el| el.text().collect::<String>())
+            .map(|el| Self::clean_text(&el.text().collect::<String>()))
             .unwrap_or_default();
 
         let base_url = Url::parse(url)?;
